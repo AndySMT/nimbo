@@ -1,6 +1,13 @@
+import type { AppType } from "next/app";
+import { api, setAccessToken } from "@/utils/api";
 import "@/styles/globals.css";
-import type { AppProps } from "next/app";
 
-export default function App({ Component, pageProps }: AppProps) {
+const App: AppType<{ accessToken?: string | null }> = ({
+  Component,
+  pageProps,
+}) => {
+  setAccessToken(pageProps.accessToken ?? ""); // lo useremo negli header tRPC
   return <Component {...pageProps} />;
-}
+};
+
+export default api.withTRPC(App);
