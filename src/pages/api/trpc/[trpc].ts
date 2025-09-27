@@ -4,7 +4,7 @@ import { createTRPCContext } from "@/server/api/trpc";
 
 export default createNextApiHandler({
   router: appRouter,
-  createContext: ({ req }) => createTRPCContext({ req }),
+  createContext: createTRPCContext,
   onError({ error, path, type }) {
     console.error("tRPC error:", {
       type,

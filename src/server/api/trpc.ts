@@ -1,23 +1,32 @@
-import { initTRPC, TRPCError } from "@trpc/server";
-import superjson from "superjson";
+import { initTRPC } from "@trpc/server";
+import type { NextApiRequest, NextApiResponse } from "next";
 
-export type Context = { user?: { id: string } | null };
+export type Context = {
+  token: string;
+  req: NextApiRequest;
+  res: NextApiResponse;
+};
 
-// Crea il context (prende il token dal header Authorization)
-export async function createTRPCContext(opts: { req: any }) {
-  const auth = opts.req?.headers?.authorization as string | undefined;
-  const token = auth?.startsWith("Bearer ") ? auth.slice(7) : "";
-  const user = token ? { id: "u1" } : null; // mock
-  return { user } satisfies Context;
-}
+export const createTRPCContext = (opts: {
+  req: NextApiRequest;
+  res: NextApiResponse;
+}): Context => {
+  const auth = opts.req.headers["authorization"] || "";
+  const token =
+    typeof auth === "string" && auth.startsWith("Bearer ")
+      ? auth.slice("Bearer ".length)
+      : "";
 
-const t = initTRPC.context<Context>().create({
-  transformer: superjson,
-});
+  return { token, req: opts.req, res: opts.res };
+};
+
+const t = initTRPC.context<Context>().create();
 
 export const createTRPCRouter = t.router;
 export const publicProcedure = t.procedure;
 export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
-  if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+  if (!ctx.token) {
+    throw new Error("UNAUTHORIZED");
+  }
   return next();
 });

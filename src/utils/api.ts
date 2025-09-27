@@ -1,30 +1,27 @@
 import { createTRPCNext } from "@trpc/next";
-import type { AppRouter } from "@/server/api/root";
+import { httpBatchLink, loggerLink, type HTTPHeaders } from "@trpc/client";
 import superjson from "superjson";
-import { httpLink, loggerLink } from "@trpc/client";
+import type { AppRouter } from "@/server/api/root";
 
 let ACCESS_TOKEN = "";
 export const setAccessToken = (t: string) => {
-  ACCESS_TOKEN = t || "";
+  ACCESS_TOKEN = t;
 };
 
 export const api = createTRPCNext<AppRouter>({
-  config({ ctx }) {
+  config() {
     return {
       transformer: superjson,
       links: [
         loggerLink({ enabled: () => process.env.NODE_ENV === "development" }),
-        // usa POST JSON (evita i problemi visti con GET/querystring)
-        httpLink({
+        httpBatchLink({
           url: "/api/trpc",
-          // @ts-expect-error alcune versioni non tipano 'method'
-          method: "POST",
           headers() {
-            return ACCESS_TOKEN
-              ? { authorization: `Bearer ${ACCESS_TOKEN}` }
-              : {};
+            const h: HTTPHeaders = {};
+            if (ACCESS_TOKEN) h.authorization = `Bearer ${ACCESS_TOKEN}`;
+            return h;
           },
-        } as any),
+        }),
       ],
     };
   },
