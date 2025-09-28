@@ -160,6 +160,6 @@ export default function AuthenticatedPage({ accessToken }: Props) {
 
 // Legge il token dall'URL e lo passa come prop (SSR)
 export const getServerSideProps: GetServerSideProps<Props> = async (ctx) => {
-  const token = (ctx.query?.token as string) || null;
-  return { props: { accessToken: token } };
+  const token = (ctx.query?.token as string) || null; // <— legge ?token=...
+  return { props: { accessToken: token } }; // <— legge ?token=...
 };

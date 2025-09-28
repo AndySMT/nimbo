@@ -1,0 +1,173 @@
+1) Tu apri l’URL
+
+Apri il browser su:
+
+http://localhost:3000/authenticated?token=demo
+
+
+Questo fa un GET alla pagina Next “/authenticated” con una querystring token=demo.
+
+2) Next esegue getServerSideProps (SSR)
+
+Nel file src/pages/authenticated/index.tsx c’è:
+
+export const getServerSideProps = async (ctx) => {
+  const token = (ctx.query?.token as string) || null; // <— legge ?token=...
+  return { props: { accessToken: token } };          // <— lo passa alla pagina
+};
+
+
+Questo codice gira sul server, prima che la pagina venga inviata al browser.
+
+Estrae demo dalla querystring e lo inserisce nei props della pagina come accessToken.
+
+Risultato: quando il browser riceve l’HTML iniziale, React “idrata” il componente e lui ha già props.accessToken = "demo".
+
+3) _app.tsx mette il token nel client tRPC
+
+Nel file src/pages/_app.tsx:
+
+function App({ Component, pageProps }) {
+  const anyProps = pageProps as any;
+  if (anyProps?.accessToken) setAccessToken(anyProps.accessToken);
+  return <Component {...pageProps} />;
+}
+export default api.withTRPC(App);
+
+
+_app è il “contenitore” di tutte le pagine.
+
+Qui chiamiamo setAccessToken("demo"): memorizziamo il token in una variabile usata dal client tRPC.
+
+Il client tRPC (in src/utils/api.ts) usa quel token per aggiungere l’header:
+
+Authorization: Bearer demo
+
+
+a tutte le chiamate tRPC.
+
+4) La pagina monta e fa la query quests.list
+
+Nel componente di pagina:
+
+const quests = api.quests.list.useQuery(undefined, { enabled: !!accessToken });
+
+
+Quando React monta, parte la query quests.list (abilitata solo se c’è un token).
+
+Il client tRPC chiama l’endpoint Next API:
+
+POST /api/trpc/quests.list
+
+
+con l’header Authorization: Bearer demo.
+
+5) L’endpoint /api/trpc/[trpc].ts crea il “contesto”
+
+Nel file src/pages/api/trpc/[trpc].ts:
+
+export default createNextApiHandler({
+  router: appRouter,
+  createContext: createTRPCContext, // <— costruisce ctx per ogni richiesta
+});
+
+
+e in src/server/api/trpc.ts:
+
+export const createTRPCContext = ({ req, res }) => {
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return { token, req, res }; // <— ctx visibile dentro i resolver
+};
+
+
+Ogni volta che arriva una richiesta tRPC, costruiamo un ctx che contiene il token estratto dall’header.
+
+Questo ctx sarà accessibile ai resolver del router (server).
+
+6) Il middleware protectedProcedure verifica il token
+
+Sempre in trpc.ts:
+
+export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
+  if (!ctx.token) throw new Error("UNAUTHORIZED");
+  return next();
+});
+
+
+Le route “protette” (come quests.list, quests.submit, quests.reset) richiedono il token.
+
+Se il token manca → errore 401; se c’è → passa al resolver.
+
+7) Il resolver quests.list legge/inizializza i dati
+
+In src/server/api/routers/quests.ts:
+
+list: protectedProcedure.query(({ ctx }) => {
+  const { token } = ctx;
+  const data = seedFor(token); // <— crea o prende i dati per quel token
+  return data;                 // { points, quests: [...] }
+}),
+
+
+seedFor(token) usa una Map in-memory per salvare i dati per quel token (utente finto).
+
+Ritorna { points, quests }.
+
+Questo JSON viene inviato al client.
+
+8) React riceve i dati e renderizza
+
+Nel componente:
+
+const payload = (quests.data as any)?.json ?? quests.data; // fallback
+const list = Array.isArray(payload?.quests) ? payload.quests : [];
+const points = typeof payload?.points === "number" ? payload.points : 0;
+
+
+Qui estrai points e quests dal risultato e mostri la lista con gli input.
+
+Se una quest è completata → input disabilitato, badge “✓”.
+
+9) Quando premi “Invia”: mutation quests.submit
+
+Nel componente:
+
+submit.mutate({ id, answer: n });
+
+
+Il client tRPC fa:
+
+POST /api/trpc/quests.submit
+
+
+con body { id, answer } e header Authorization: Bearer demo.
+
+Server, nello stesso router:
+
+submit: protectedProcedure
+  .input(z.object({ id: z.string(), answer: z.number() })) // <— valida
+  .mutation(({ ctx, input }) => {
+    const data = seedFor(ctx.token);
+    const q = data.quests.find((x) => x.id === input.id);
+    const correct = input.answer === q.answer;
+    if (correct) { q.completed = true; data.points += q.reward; }
+    return { ok: true, correct, reward: correct ? q.reward : 0, points: data.points };
+  }),
+
+
+Valida l’input (Zod).
+
+Aggiorna lo stato in-memory per quel token.
+
+Ritorna { correct, reward, points }.
+
+Nel client, in onSuccess, fai quests.refetch() → la UI rilegge list aggiornata e si aggiorna (punti su, quest con ✓).
+
+10) Reset
+
+Il bottone chiama quests.reset:
+
+Azzera i punti e rimette tutte le quest a completed: false.
+
+In onSuccess fai refetch() e la UI torna “pulita”.
